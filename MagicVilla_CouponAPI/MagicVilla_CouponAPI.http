@@ -1,0 +1,27 @@
+@MagicVilla_CouponAPI_HostAddress = http://localhost:5011
+
+GET {{MagicVilla_CouponAPI_HostAddress}}/api/coupon/
+Accept: application/json
+
+###
+
+POST {{MagicVilla_CouponAPI_HostAddress}}/api/coupon
+
+###
+
+GET {{MagicVilla_CouponAPI_HostAddress}}/api/coupon
+
+###
+
+PUT {{MagicVilla_CouponAPI_HostAddress}}/api/coupon
+
+###
+
+@id=0
+DELETE {{MagicVilla_CouponAPI_HostAddress}}/api/coupon/{id:int}?id={{id}}
+
+###
+
+GET {{MagicVilla_CouponAPI_HostAddress}}/api/coupon/{id:int}?id={{id}}
+
+###

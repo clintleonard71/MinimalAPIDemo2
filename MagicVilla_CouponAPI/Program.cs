@@ -174,7 +174,7 @@ namespace MagicVilla_CouponAPI
             app.UseAuthorization();
 
             app.Run();
-
+            
         }
     }
 }

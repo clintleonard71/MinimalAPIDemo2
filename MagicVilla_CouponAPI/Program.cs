@@ -67,9 +67,9 @@ namespace MagicVilla_CouponAPI
                 ApiResponse apiResponse = 
                     new ApiResponse(CouponStore.Coupons.FirstOrDefault(c => c.Id == id), HttpStatusCode.OK);
 
-                return Results.Ok(apiResponse);
+                return apiResponse;
 
-            }).WithName("GetCoupon").Produces<Coupon>(200);
+            }).WithName("GetCoupon").Produces<ApiResponse>(200);
 
 
             //POST /api/coupon            
@@ -120,27 +120,26 @@ namespace MagicVilla_CouponAPI
                     {
                         apiResponse.Errors = validationResult.Errors.Select(e => e.ErrorMessage).ToList();
                         apiResponse.StatusCode = HttpStatusCode.BadRequest;
-                        return Task.FromResult(Results.BadRequest(apiResponse));
+                        return Task.FromResult(apiResponse);
                     }
 
-                    if (CouponStore.Coupons.Exists(c => c.Id == couponUpdateDto.Id))
+                    if (!CouponStore.Coupons.Exists(c => c.Id == couponUpdateDto.Id))
                     {
                         apiResponse.Errors.Add("Coupon not found");
                         apiResponse.StatusCode = HttpStatusCode.NotFound;
-                        return Task.FromResult(Results.NotFound(apiResponse));
+                        return Task.FromResult(apiResponse);
                     }
 
                     Coupon coupon = _mapper.Map<Coupon>(couponUpdateDto);
                     CouponDTO couponDTO = _mapper.Map<CouponDTO>(coupon);
 
-                    CouponStore.Coupons[coupon.Id] = coupon;
-
+                    CouponStore.Coupons[coupon.Id - 1] = coupon;
+                     
                     apiResponse.Result = couponDTO;
 
-                    return Task.FromResult(Results.Ok(apiResponse));
+                    return Task.FromResult(apiResponse);
                     //return Results.CreatedAtRoute("GetCoupon", new { id = coupon.Id }, couponDTO);
                     //return Results.Created($"/api/coupon/{coupon.Id}", coupon);
-
 
                 }).WithName("UpdateCoupon")
                   .Accepts<CouponUpdateDTO>("application/json")
@@ -151,7 +150,22 @@ namespace MagicVilla_CouponAPI
 
             app.MapDelete("/api/coupon/{id:int}", (int id) => {
 
-                return Results.Ok(CouponStore.Coupons.FirstOrDefault(c => c.Id == id));
+                ApiResponse apiResponse = new ApiResponse(id, HttpStatusCode.OK);
+                if (!CouponStore.Coupons.Exists(c => c.Id == id))
+                {
+                    apiResponse.Errors.Add($"Coupon {id} not found");
+                    apiResponse.StatusCode = HttpStatusCode.NotFound;
+                    return apiResponse;
+                }
+                
+                var couponStore = CouponStore.Coupons.Where(c => c.Id != id).ToList();
+
+                CouponStore.Coupons = couponStore;
+
+                apiResponse.Result = $"Coupon deleted. Id deleted = {id}.  Num coupons remaining is {CouponStore.Coupons.Count()}";
+                apiResponse.StatusCode = HttpStatusCode.OK;
+                
+                return apiResponse;
 
             }).WithName("DeleteCoupon");
 

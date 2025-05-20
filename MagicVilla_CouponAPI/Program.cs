@@ -1,35 +1,99 @@
-
-using AutoMapper;
 using FluentValidation;
+using MagicVilla_CouponAPI.AuthEndpoints;
+using MagicVilla_CouponAPI.CouponEndpoints;
 using MagicVilla_CouponAPI.Data;
-using MagicVilla_CouponAPI.Models;
-using MagicVilla_CouponAPI.Models.DTO;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
+using MagicVilla_CouponAPI.Repository;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Scalar.AspNetCore;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Net;
+using System.Diagnostics;
+using System.Net.Http.Headers;
 
 namespace MagicVilla_CouponAPI
 {
+    [DebuggerDisplay($"{{{nameof(GetDebuggerDisplay)}(),nq}}")]
     public class Program
     {
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // Add services to the container.
-            builder.Services.AddAuthorization();
+            builder.Services.AddOpenApi("v1", options =>
+            {
+                options.AddDocumentTransformer(async (document, context, cancellationToken) =>
+                {
+                    document.Components ??= new OpenApiComponents();
+                    document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
+                    {
+                        Type = SecuritySchemeType.Http,
+                        Scheme = "bearer",
+                        In = ParameterLocation.Header,
+                        BearerFormat = "JWT",
+                        Description = "JWT Authorization header using the Bearer scheme."
+                    };
 
-            // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-            builder.Services.AddOpenApi();
+                    // Optionally add security requirements to each operation:
+                    foreach (var path in document.Paths.Values)
+                    {
+                        foreach (var operation in path.Operations.Values)
+                        {
+                            operation.Security.Add(new OpenApiSecurityRequirement
+                            {
+                                        {
+                                            new OpenApiSecurityScheme
+                                            {
+                                                Reference = new OpenApiReference
+                                                {
+                                                    Type = ReferenceType.SecurityScheme,
+                                                    Id = "Bearer"
+                                                }
+                                            },
+                                            Array.Empty<string>()
+                                        }
+                            });
+                        }
+                    }
+
+                    await Task.CompletedTask; // Ensure the lambda returns a Task
+                });
+            });
+
+            //builder.Services.AddSingleton<IAuthenticationSchemeProvider, >();
+            builder.Services.AddScoped<ICouponRepository, CouponRepository>();
+            builder.Services.AddScoped<IAuthRepository, AuthRepository>();
 
             builder.Services.AddAutoMapper(typeof(MappingConfig));
 
             builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+
+            builder.Services.AddDbContext<ApplicationDBContext>(options =>
+                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
+                );
+
+            builder.Services.AddAuthentication(x =>
+            {
+                x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                x.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            }).AddJwtBearer(x =>
+            {
+
+                x.RequireHttpsMetadata = false;
+                x.SaveToken = true;
+                x.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(builder.Configuration["ApiSettings:Secret"]!)),
+                    ValidateIssuer = false,
+                    ValidateAudience = false
+                };
+            });
+
+            builder.Services.AddAuthorization(options => 
+            {
+                options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+            });
+
 
             var app = builder.Build();
 
@@ -37,7 +101,7 @@ namespace MagicVilla_CouponAPI
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();
-                
+
                 app.MapScalarApiReference(options =>
                 {
                     options.Title = "Coupon API";
@@ -45,136 +109,41 @@ namespace MagicVilla_CouponAPI
                     options.ShowSidebar = true; // Ensure sidebar is visible
                     options.WithForceThemeMode(ThemeMode.Dark); // Default to dark mode if preferred
                     options.WithOpenApiRoutePattern("/openapi/v1.json");
+
+                    options.WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.AsyncHttp);
+
+                    options.AddHttpAuthentication("Bearer", scheme =>
+                    {
+                        scheme.Description = "Bearer token for authentication";
+                    });
+
+                    options.Authentication = new ScalarAuthenticationOptions
+                    {
+                        PreferredSecurityScheme = "Bearer"
+                    };
                 });
 
                 app.UseDefaultFiles(); // Ensures Scalar is the default page
                 app.UseStaticFiles();
             }
-                    
-            app.MapGet("/api/coupon/", (ILogger<Program> _logger) => 
-            {                
-                _logger.Log(LogLevel.Information, "Get all coupons called");
 
-                ApiResponse apiResponse = new ApiResponse(CouponStore.Coupons, HttpStatusCode.OK);
-                
-                return Results.Ok(apiResponse);
+            app.UseAuthentication();
+            app.UseAuthorization();
 
-            }).WithName("GetCoupons")
-              .Produces<ApiResponse>(200);
-
-            app.MapGet("/api/coupon/{id:int}", (int id) => 
-            {
-                ApiResponse apiResponse = 
-                    new ApiResponse(CouponStore.Coupons.FirstOrDefault(c => c.Id == id), HttpStatusCode.OK);
-
-                return apiResponse;
-
-            }).WithName("GetCoupon").Produces<ApiResponse>(200);
-
-
-            //POST /api/coupon            
-            app.MapPost("/api/coupon/",                 
-                async (HttpContext context) => 
-                {
-                    // Resolve dependencies from DI container
-                    var _validator = context.RequestServices.GetRequiredService<IValidator<CouponCreateDTO>>();
-                    var _mapper = context.RequestServices.GetRequiredService<IMapper>();
-                    var couponCreateDto = await context.Request.ReadFromJsonAsync<CouponCreateDTO>();
-
-                    var validationResult = await _validator.ValidateAsync(couponCreateDto);
-                    if (!validationResult.IsValid)
-                    {
-                        return Results.BadRequest(validationResult.Errors); 
-                    }
-
-                    Coupon coupon = _mapper.Map<Coupon>(couponCreateDto);
-                    
-                    coupon.Id = CouponStore.Coupons.Max(c => c.Id) + 1;
-
-                    CouponStore.Coupons.Add(coupon);
-
-                    CouponDTO couponDTO = _mapper.Map<CouponDTO>(coupon);
-
-                    ApiResponse apiResponse = new ApiResponse(couponDTO, HttpStatusCode.OK);
-
-                    return Results.CreatedAtRoute("GetCoupon", new { id = coupon.Id }, couponDTO);
-                    //return Results.Created($"/api/coupon/{coupon.Id}", coupon);
-
-                }).WithName("CreateCoupon")
-                  .Accepts<CouponCreateDTO>("application/json")
-                  .Produces<CouponDTO>(200)
-                  .Produces(400);
-
-            //PUT /api/coupon/
-            app.MapPut("/api/coupon/",
-                async ([FromBody] CouponUpdateDTO couponUpdateDto, HttpContext context) =>
-                {
-                    // Resolve dependencies from DI container
-                    var _validator = context.RequestServices.GetRequiredService<IValidator<CouponUpdateDTO>>();
-                    var _mapper = context.RequestServices.GetRequiredService<IMapper>();
-
-                    ApiResponse apiResponse = new ApiResponse(couponUpdateDto, HttpStatusCode.OK);
-
-                    var validationResult = await _validator.ValidateAsync(couponUpdateDto);
-                    if (!validationResult.IsValid)
-                    {
-                        apiResponse.Errors = validationResult.Errors.Select(e => e.ErrorMessage).ToList();
-                        apiResponse.StatusCode = HttpStatusCode.BadRequest;
-                        return Task.FromResult(apiResponse);
-                    }
-
-                    if (!CouponStore.Coupons.Exists(c => c.Id == couponUpdateDto.Id))
-                    {
-                        apiResponse.Errors.Add("Coupon not found");
-                        apiResponse.StatusCode = HttpStatusCode.NotFound;
-                        return Task.FromResult(apiResponse);
-                    }
-
-                    Coupon coupon = _mapper.Map<Coupon>(couponUpdateDto);
-                    CouponDTO couponDTO = _mapper.Map<CouponDTO>(coupon);
-
-                    CouponStore.Coupons[coupon.Id - 1] = coupon;
-                     
-                    apiResponse.Result = couponDTO;
-
-                    return Task.FromResult(apiResponse);
-                    //return Results.CreatedAtRoute("GetCoupon", new { id = coupon.Id }, couponDTO);
-                    //return Results.Created($"/api/coupon/{coupon.Id}", coupon);
-
-                }).WithName("UpdateCoupon")
-                  .Accepts<CouponUpdateDTO>("application/json")
-                  .Produces<ApiResponse>(200)
-                  .Produces<ApiResponse>(400)
-                  .Produces<ApiResponse>(404);
-                  
-
-            app.MapDelete("/api/coupon/{id:int}", (int id) => {
-
-                ApiResponse apiResponse = new ApiResponse(id, HttpStatusCode.OK);
-                if (!CouponStore.Coupons.Exists(c => c.Id == id))
-                {
-                    apiResponse.Errors.Add($"Coupon {id} not found");
-                    apiResponse.StatusCode = HttpStatusCode.NotFound;
-                    return apiResponse;
-                }
-                
-                var couponStore = CouponStore.Coupons.Where(c => c.Id != id).ToList();
-
-                CouponStore.Coupons = couponStore;
-
-                apiResponse.Result = $"Coupon deleted. Id deleted = {id}.  Num coupons remaining is {CouponStore.Coupons.Count()}";
-                apiResponse.StatusCode = HttpStatusCode.OK;
-                
-                return apiResponse;
-
-            }).WithName("DeleteCoupon");
+            app.ConfigureAuthEndpoints();
+            app.ConfigureCouponEndpoints();
 
             app.UseHttpsRedirection();
 
             app.UseAuthorization();
 
             app.Run();
-            
+
+        }
+
+        private string GetDebuggerDisplay()
+        {
+            return ToString();
         }
     }
 }

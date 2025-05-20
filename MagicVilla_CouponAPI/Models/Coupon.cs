@@ -7,7 +7,6 @@
         public int Percent { get; set; }
         public bool IsActive { get; set; }
         public DateTime? Created { get; set; }
-        public DateTime? Updated { get; set; } = DateTime.UtcNow;
-
+        public DateTime? Updated { get; set; }
     }
 }

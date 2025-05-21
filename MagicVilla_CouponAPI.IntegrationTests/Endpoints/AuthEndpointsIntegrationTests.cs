@@ -29,7 +29,7 @@ public class AuthEndpointsIntegrationTests : IClassFixture<WebApplicationFactory
             Password = "password"
         };
 
-        // First registration should succeed
+        // First registration should succeed CTL
         var firstResponse = await _client.PostAsJsonAsync("/api/register/", registration);
         firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
